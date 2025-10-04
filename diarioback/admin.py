@@ -379,6 +379,16 @@ from django.utils.html import format_html
 from django.utils import timezone
 from datetime import timedelta
 
+# IMPORTANTE: Asegúrate de que este import funcione
+try:
+    from .models import Donacion
+except ImportError:
+    from diarioback.models import Donacion
+
+# Si tienes StaffPermissionMixin en otro archivo, impórtalo
+# from .mixins import StaffPermissionMixin
+# Si NO lo tienes, NO uses el mixin (comentado abajo)
+
 
 # Filtro personalizado por semana - DEBE IR ANTES de DonacionAdmin
 class SemanaFilter(admin.SimpleListFilter):
@@ -425,14 +435,18 @@ class SemanaFilter(admin.SimpleListFilter):
                     fecha_donacion__gte=primer_dia,
                     fecha_donacion__lt=ultimo_dia
                 )
-            except:
+            except Exception as e:
+                # En producción, es mejor no silenciar errores completamente
+                print(f"Error en SemanaFilter: {e}")
                 return queryset
         
         return queryset
 
 
 @admin.register(Donacion)
-class DonacionAdmin(StaffPermissionMixin, admin.ModelAdmin):
+class DonacionAdmin(admin.ModelAdmin):
+    # Si necesitas StaffPermissionMixin, descoméntalo arriba y usa:
+    # class DonacionAdmin(StaffPermissionMixin, admin.ModelAdmin):
     list_display = (
         'nombre', 
         'correo', 
@@ -468,18 +482,27 @@ class DonacionAdmin(StaffPermissionMixin, admin.ModelAdmin):
     ordering = ['-fecha_donacion']
     
     def fecha_donacion_formateada(self, obj):
-        return obj.fecha_donacion.strftime("%d/%m/%Y %H:%M")
+        """Formatea la fecha de donación"""
+        if obj.fecha_donacion:
+            return obj.fecha_donacion.strftime("%d/%m/%Y %H:%M")
+        return "-"
     fecha_donacion_formateada.short_description = 'Fecha y Hora'
     fecha_donacion_formateada.admin_order_field = 'fecha_donacion'
     
     def semana_donacion(self, obj):
         """Muestra el número de semana del año"""
-        semana = obj.fecha_donacion.isocalendar()[1]
-        año = obj.fecha_donacion.year
-        return f"Semana {semana} - {año}"
+        if obj.fecha_donacion:
+            semana = obj.fecha_donacion.isocalendar()[1]
+            año = obj.fecha_donacion.year
+            return f"Semana {semana} - {año}"
+        return "-"
     semana_donacion.short_description = 'Semana'
     
     def mes_donacion(self, obj):
+        """Muestra el mes de la donación"""
+        if not obj.fecha_donacion:
+            return "-"
+            
         meses = {
             1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
             5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
@@ -490,22 +513,34 @@ class DonacionAdmin(StaffPermissionMixin, admin.ModelAdmin):
     mes_donacion.short_description = 'Mes'
     
     def ver_comprobante(self, obj):
+        """Muestra miniatura del comprobante"""
         if obj.comprobante:
-            return format_html(
-                '<a href="{}" target="_blank"><img src="{}" style="max-height: 50px;"/></a>',
-                obj.comprobante, obj.comprobante
-            )
+            try:
+                # Intenta acceder a .url de forma segura
+                url = obj.comprobante.url if hasattr(obj.comprobante, 'url') else str(obj.comprobante)
+                return format_html(
+                    '<a href="{}" target="_blank"><img src="{}" style="max-height: 50px;"/></a>',
+                    url, url
+                )
+            except Exception as e:
+                return f"Error: {str(e)}"
         return "Sin comprobante"
     ver_comprobante.short_description = 'Miniatura'
     
     def ver_comprobante_completo(self, obj):
+        """Muestra comprobante completo"""
         if obj.comprobante:
-            return format_html(
-                '<a href="{}" target="_blank"><img src="{}" style="max-width: 500px; max-height: 500px;"/></a>',
-                obj.comprobante, obj.comprobante
-            )
+            try:
+                url = obj.comprobante.url if hasattr(obj.comprobante, 'url') else str(obj.comprobante)
+                return format_html(
+                    '<a href="{}" target="_blank"><img src="{}" style="max-width: 500px; max-height: 500px;"/></a>',
+                    url, url
+                )
+            except Exception as e:
+                return f"Error: {str(e)}"
         return "Sin comprobante"
     ver_comprobante_completo.short_description = 'Comprobante'
     
     def has_add_permission(self, request):
+        """Deshabilita agregar donaciones desde el admin"""
         return False
