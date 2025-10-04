@@ -464,7 +464,7 @@ class DonacionAdmin(admin.ModelAdmin):
     
     search_fields = ('nombre', 'correo')
     
-    readonly_fields = ('fecha_donacion', 'comprobante', 'ver_comprobante_completo')
+    readonly_fields = ('fecha_donacion', 'comprobante', 'comprobante_local', 'ver_comprobante_completo')
     
     fieldsets = (
         ('Información del Donante', {
@@ -474,7 +474,7 @@ class DonacionAdmin(admin.ModelAdmin):
             'fields': ('monto', 'mensaje', 'fecha_donacion')
         }),
         ('Comprobante', {
-            'fields': ('ver_comprobante_completo', 'comprobante')
+            'fields': ('ver_comprobante_completo', 'comprobante', 'comprobante_local')
         })
     )
     
@@ -514,30 +514,41 @@ class DonacionAdmin(admin.ModelAdmin):
     
     def ver_comprobante(self, obj):
         """Muestra miniatura del comprobante"""
+        # Priorizar comprobante (URL de Imgur)
         if obj.comprobante:
+            return format_html(
+                '<a href="{}" target="_blank"><img src="{}" style="max-height: 50px;"/></a>',
+                obj.comprobante, obj.comprobante
+            )
+        # Si no hay URL, intentar con comprobante_local
+        elif obj.comprobante_local:
             try:
-                # Intenta acceder a .url de forma segura
-                url = obj.comprobante.url if hasattr(obj.comprobante, 'url') else str(obj.comprobante)
                 return format_html(
                     '<a href="{}" target="_blank"><img src="{}" style="max-height: 50px;"/></a>',
-                    url, url
+                    obj.comprobante_local.url, obj.comprobante_local.url
                 )
-            except Exception as e:
-                return f"Error: {str(e)}"
+            except Exception:
+                return "Error al cargar imagen local"
         return "Sin comprobante"
     ver_comprobante.short_description = 'Miniatura'
     
     def ver_comprobante_completo(self, obj):
         """Muestra comprobante completo"""
+        # Priorizar comprobante (URL de Imgur)
         if obj.comprobante:
+            return format_html(
+                '<a href="{}" target="_blank"><img src="{}" style="max-width: 500px; max-height: 500px;"/></a>',
+                obj.comprobante, obj.comprobante
+            )
+        # Si no hay URL, intentar con comprobante_local
+        elif obj.comprobante_local:
             try:
-                url = obj.comprobante.url if hasattr(obj.comprobante, 'url') else str(obj.comprobante)
                 return format_html(
                     '<a href="{}" target="_blank"><img src="{}" style="max-width: 500px; max-height: 500px;"/></a>',
-                    url, url
+                    obj.comprobante_local.url, obj.comprobante_local.url
                 )
-            except Exception as e:
-                return f"Error: {str(e)}"
+            except Exception:
+                return "Error al cargar imagen local"
         return "Sin comprobante"
     ver_comprobante_completo.short_description = 'Comprobante'
     
