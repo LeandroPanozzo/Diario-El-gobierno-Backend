@@ -2,6 +2,7 @@ from rest_framework.routers import DefaultRouter
 from django.urls import path, include, re_path
 from . import views
 from .views import (
+    DonacionViewSet,
     RolViewSet,
     TrabajadorViewSet,
     UsuarioViewSet,
@@ -43,6 +44,8 @@ router.register(r'comentarios', ComentarioViewSet)
 router.register(r'imagenes', ImagenViewSet)
 router.register(r'publicidades', PublicidadViewSet)
 router.register(r'noticias', NoticiaViewSet, basename='noticias')
+# En la sección de router.register
+router.register(r'donaciones', DonacionViewSet, basename='donaciones')
 
 urlpatterns = [
     path('', redirect_to_home, name='redirect_to_home'),

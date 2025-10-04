@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Rol, Trabajador, UserProfile, Usuario,  upload_to_imgur, Noticia, Comentario, EstadoPublicacion, Imagen, Publicidad
+from .models import Donacion, Rol, Trabajador, UserProfile, Usuario,  upload_to_imgur, Noticia, Comentario, EstadoPublicacion, Imagen, Publicidad
 from django.contrib.auth import get_user_model
 from django.contrib.auth import authenticate
 from rest_framework import generics
@@ -419,3 +419,23 @@ class ResetPasswordSerializer(serializers.Serializer):
             raise serializers.ValidationError("Token inválido o expirado.")
         
         return data
+    
+class DonacionSerializer(serializers.ModelSerializer):
+    comprobante_local = serializers.ImageField(write_only=True, required=False)
+    comprobante = serializers.URLField(read_only=True)
+    
+    class Meta:
+        model = Donacion
+        fields = ['id', 'nombre', 'correo', 'comprobante', 'comprobante_local', 
+                  'fecha_donacion', 'monto', 'mensaje']
+        read_only_fields = ['fecha_donacion']
+    
+    def create(self, validated_data):
+        comprobante_local = validated_data.pop('comprobante_local', None)
+        donacion = Donacion.objects.create(**validated_data)
+        
+        if comprobante_local:
+            donacion.comprobante_local = comprobante_local
+            donacion.save()
+        
+        return donacion

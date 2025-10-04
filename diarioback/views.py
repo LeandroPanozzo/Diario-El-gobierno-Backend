@@ -959,3 +959,32 @@ class ResetPasswordView(APIView):
             return Response({"message": "Contraseña actualizada exitosamente."}, status=status.HTTP_200_OK)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+from rest_framework import viewsets, status
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+from .models import Donacion
+from .serializers import DonacionSerializer
+
+class DonacionViewSet(viewsets.ModelViewSet):
+    queryset = Donacion.objects.all()
+    serializer_class = DonacionSerializer
+    permission_classes = [AllowAny]  # Cualquiera puede hacer una donación
+    
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            donacion = serializer.save()
+            return Response({
+                'success': True,
+                'message': 'Donación registrada exitosamente. Te hemos enviado un correo de confirmación.',
+                'donacion': DonacionSerializer(donacion).data
+            }, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def get_permissions(self):
+        # Solo admin puede ver lista y detalles
+        if self.action in ['list', 'retrieve', 'update', 'partial_update', 'destroy']:
+            return [permissions.IsAdminUser()]
+        # Cualquiera puede crear
+        return [AllowAny()]

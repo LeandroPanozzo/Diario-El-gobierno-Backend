@@ -3,9 +3,7 @@ from django.urls import reverse
 from django.contrib.auth.models import User, Group, Permission
 from django.utils.html import format_html
 from django.contrib.contenttypes.models import ContentType
-from .models import Rol, Trabajador, Usuario, Noticia, EstadoPublicacion, Imagen, Publicidad, Comentario
-from .models import Rol, Trabajador, Usuario, Noticia, EstadoPublicacion, Imagen, Publicidad, Comentario, UserProfile
-
+from .models import Donacion, Rol, Trabajador, Usuario, Noticia, EstadoPublicacion, Imagen, Publicidad, Comentario, UserProfile
 # --- Función helper para verificar permisos de admin ---
 def es_admin_completo(user):
     """Verifica si el usuario tiene permisos de administración completos"""
@@ -376,3 +374,138 @@ class Command(BaseCommand):
             self.style.SUCCESS(f'Se procesaron {staff_users.count()} usuarios staff')
         )
 """
+from django.contrib import admin
+from django.utils.html import format_html
+from django.utils import timezone
+from datetime import timedelta
+
+
+# Filtro personalizado por semana - DEBE IR ANTES de DonacionAdmin
+class SemanaFilter(admin.SimpleListFilter):
+    title = 'Semana'
+    parameter_name = 'semana'
+
+    def lookups(self, request, model_admin):
+        """Genera las últimas 12 semanas como opciones"""
+        opciones = []
+        hoy = timezone.now()
+        
+        for i in range(12):
+            fecha = hoy - timedelta(weeks=i)
+            semana = fecha.isocalendar()[1]
+            año = fecha.year
+            
+            # Calcular el inicio de la semana
+            inicio_semana = fecha - timedelta(days=fecha.weekday())
+            fin_semana = inicio_semana + timedelta(days=6)
+            
+            # Formato: "Semana 45 (Nov 6 - Nov 12)"
+            label = f"Semana {semana} ({inicio_semana.strftime('%b %d')} - {fin_semana.strftime('%b %d, %Y')})"
+            value = f"{año}-{semana}"
+            opciones.append((value, label))
+        
+        return opciones
+
+    def queryset(self, request, queryset):
+        """Filtra el queryset por la semana seleccionada"""
+        if self.value():
+            try:
+                año, semana = self.value().split('-')
+                año = int(año)
+                semana = int(semana)
+                
+                # Calcular el primer día de la semana
+                primer_dia = timezone.datetime.strptime(f'{año}-W{semana}-1', "%Y-W%W-%w")
+                primer_dia = timezone.make_aware(primer_dia)
+                
+                # Calcular el último día de la semana
+                ultimo_dia = primer_dia + timedelta(days=7)
+                
+                return queryset.filter(
+                    fecha_donacion__gte=primer_dia,
+                    fecha_donacion__lt=ultimo_dia
+                )
+            except:
+                return queryset
+        
+        return queryset
+
+
+@admin.register(Donacion)
+class DonacionAdmin(StaffPermissionMixin, admin.ModelAdmin):
+    list_display = (
+        'nombre', 
+        'correo', 
+        'monto', 
+        'fecha_donacion_formateada',
+        'semana_donacion',
+        'mes_donacion',
+        'ver_comprobante'
+    )
+    
+    list_filter = (
+        ('fecha_donacion', admin.DateFieldListFilter),
+        SemanaFilter,  # Filtro personalizado por semana
+    )
+    
+    search_fields = ('nombre', 'correo')
+    
+    readonly_fields = ('fecha_donacion', 'comprobante', 'ver_comprobante_completo')
+    
+    fieldsets = (
+        ('Información del Donante', {
+            'fields': ('nombre', 'correo')
+        }),
+        ('Detalles de la Donación', {
+            'fields': ('monto', 'mensaje', 'fecha_donacion')
+        }),
+        ('Comprobante', {
+            'fields': ('ver_comprobante_completo', 'comprobante')
+        })
+    )
+    
+    date_hierarchy = 'fecha_donacion'
+    ordering = ['-fecha_donacion']
+    
+    def fecha_donacion_formateada(self, obj):
+        return obj.fecha_donacion.strftime("%d/%m/%Y %H:%M")
+    fecha_donacion_formateada.short_description = 'Fecha y Hora'
+    fecha_donacion_formateada.admin_order_field = 'fecha_donacion'
+    
+    def semana_donacion(self, obj):
+        """Muestra el número de semana del año"""
+        semana = obj.fecha_donacion.isocalendar()[1]
+        año = obj.fecha_donacion.year
+        return f"Semana {semana} - {año}"
+    semana_donacion.short_description = 'Semana'
+    
+    def mes_donacion(self, obj):
+        meses = {
+            1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
+            5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
+            9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
+        }
+        mes_nombre = meses[obj.fecha_donacion.month]
+        return f"{mes_nombre} {obj.fecha_donacion.year}"
+    mes_donacion.short_description = 'Mes'
+    
+    def ver_comprobante(self, obj):
+        if obj.comprobante:
+            return format_html(
+                '<a href="{}" target="_blank"><img src="{}" style="max-height: 50px;"/></a>',
+                obj.comprobante, obj.comprobante
+            )
+        return "Sin comprobante"
+    ver_comprobante.short_description = 'Miniatura'
+    
+    def ver_comprobante_completo(self, obj):
+        if obj.comprobante:
+            return format_html(
+                '<a href="{}" target="_blank"><img src="{}" style="max-width: 500px; max-height: 500px;"/></a>',
+                obj.comprobante, obj.comprobante
+            )
+        return "Sin comprobante"
+    ver_comprobante_completo.short_description = 'Comprobante'
+    
+    def has_add_permission(self, request):
+        return False

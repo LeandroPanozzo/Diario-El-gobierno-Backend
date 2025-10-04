@@ -696,3 +696,68 @@ class PasswordResetToken(models.Model):
             
         return token
 
+class Donacion(models.Model):
+    nombre = models.CharField(max_length=100)
+    correo = models.EmailField()
+    comprobante = models.URLField(blank=True, null=True)
+    comprobante_local = models.ImageField(upload_to='donaciones/', blank=True, null=True)
+    fecha_donacion = models.DateTimeField(auto_now_add=True)
+    monto = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text="Monto de la donación (opcional)")
+    mensaje = models.TextField(blank=True, null=True, help_text="Mensaje del donante (opcional)")
+    
+    class Meta:
+        ordering = ['-fecha_donacion']
+        verbose_name = 'Donación'
+        verbose_name_plural = 'Donaciones'
+    
+    def __str__(self):
+        return f'{self.nombre} - {self.fecha_donacion.strftime("%d/%m/%Y")}'
+    
+    def save(self, *args, **kwargs):
+        # Si hay comprobante local, subirlo a Imgur
+        if self.comprobante_local and hasattr(self.comprobante_local, 'file'):
+            uploaded_url = upload_to_imgur(self.comprobante_local)
+            if uploaded_url:
+                self.comprobante = uploaded_url
+                # Limpiar el campo local después de subir
+                self.comprobante_local = None
+        
+        super().save(*args, **kwargs)
+        
+        # Enviar email de agradecimiento después de guardar
+        self.enviar_email_agradecimiento()
+    
+    def enviar_email_agradecimiento(self):
+        """Envía un correo de agradecimiento al donante"""
+        from django.core.mail import send_mail
+        from django.conf import settings
+        
+        subject = "¡Gracias por tu donación!"
+        message = f"""
+Hola {self.nombre},
+
+¡Muchas gracias por tu generosa donación!
+
+Tu apoyo es fundamental para continuar con nuestra labor periodística independiente y de calidad. Gracias a personas como tú, podemos seguir informando con veracidad y compromiso.
+
+Hemos recibido tu comprobante y lo verificaremos a la brevedad.
+
+Fecha de donación: {self.fecha_donacion.strftime("%d de %B de %Y a las %H:%M")}
+
+Si tienes alguna pregunta o necesitas un comprobante adicional, no dudes en contactarnos respondiendo a este correo.
+
+Con gratitud,
+El equipo de [Nombre del Diario]
+        """
+        
+        try:
+            send_mail(
+                subject,
+                message,
+                settings.DEFAULT_FROM_EMAIL,
+                [self.correo],
+                fail_silently=False,
+            )
+        except Exception as e:
+            print(f"Error al enviar email de agradecimiento: {str(e)}")
+            
