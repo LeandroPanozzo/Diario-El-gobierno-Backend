@@ -207,7 +207,84 @@ class NoticiaViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
-
+    
+    @action(detail=False, methods=['get'])
+    def buscar(self, request):
+        """
+        Búsqueda avanzada de noticias con múltiples criterios
+        """
+        query = request.query_params.get('q', '').strip()
+        search_type = request.query_params.get('type', 'all')  # all, title, content, etc.
+        
+        if not query:
+            return Response(
+                {"error": "Se requiere el parámetro 'q' para la búsqueda"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get parameters
+        limit = request.query_params.get('limit', 20)
+        try:
+            limit = int(limit)
+        except ValueError:
+            limit = 20
+            
+        estado = request.query_params.get('estado', 3)
+        categoria = request.query_params.get('categoria')
+        fecha_desde = request.query_params.get('fecha_desde')
+        fecha_hasta = request.query_params.get('fecha_hasta')
+        
+        # Base queryset
+        queryset = self.queryset.filter(estado=estado)
+        
+        # Build search query based on search type
+        search_query = Q()
+        
+        if search_type == 'all' or search_type == 'title':
+            search_query |= Q(nombre_noticia__icontains=query)
+        
+        if search_type == 'all' or search_type == 'content':
+            search_query |= Q(contenido__icontains=query)
+            search_query |= Q(subtitulo__icontains=query)
+        
+        if search_type == 'all' or search_type == 'keywords':
+            search_query |= Q(Palabras_clave__icontains=query)
+        
+        if search_type == 'all' or search_type == 'categories':
+            search_query |= Q(categorias__icontains=query)
+        
+        # Apply search filter
+        queryset = queryset.filter(search_query)
+        
+        # Additional filters
+        if categoria:
+            queryset = queryset.filter(categorias__contains=categoria)
+        
+        if fecha_desde:
+            queryset = queryset.filter(fecha_publicacion__gte=fecha_desde)
+            
+        if fecha_hasta:
+            queryset = queryset.filter(fecha_publicacion__lte=fecha_hasta)
+        
+        # Order by publication date (most recent first)
+        queryset = queryset.order_by('-fecha_publicacion')
+        
+        # Apply limit
+        queryset = queryset[:limit]
+        
+        # Get total count before limiting for pagination info
+        total_count = queryset.count()
+        
+        serializer = self.get_serializer(queryset, many=True)
+        
+        return Response({
+            'query': query,
+            'search_type': search_type,
+            'results_count': total_count,
+            'returned_count': len(serializer.data),
+            'results': serializer.data
+        })
+    
     @action(detail=False, methods=['get'])
     def mas_vistas(self, request):
         """
