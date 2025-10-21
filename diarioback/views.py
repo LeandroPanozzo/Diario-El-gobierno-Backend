@@ -590,13 +590,16 @@ class NoticiaViewSet(viewsets.ModelViewSet):
         # Get the pk value from the URL (which might be in the format 'id-slug')
         pk_value = self.kwargs.get(self.lookup_field)
         
+        # Convert to string to handle both int and string cases
+        pk_str = str(pk_value) if pk_value is not None else ''
+        
         # If it's in 'id-slug' format, extract just the numeric ID part
-        if pk_value and '-' in pk_value:
+        if pk_str and '-' in pk_str:
             # Split by the first hyphen only to get the ID
-            pk_parts = pk_value.split('-', 1)
+            pk_parts = pk_str.split('-', 1)
             pk = pk_parts[0]
         else:
-            pk = pk_value
+            pk = pk_value  # Keep original value (could be int or string)
         
         # Get the object using just the ID
         queryset = self.filter_queryset(self.get_queryset())
