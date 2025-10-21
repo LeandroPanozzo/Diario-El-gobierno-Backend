@@ -81,12 +81,26 @@ urlpatterns = [
     path('noticias/<int:id>/mi-reaccion/', views.mi_reaccion, name='mi_reaccion'),
     
     # 3. Rutas de detalle con slug (más específicas primero)
+    # ✅ CORREGIDO: Agregados PUT, PATCH, DELETE
     re_path(r'^noticias/(?P<pk>\d+)-(?P<slug>[\w-]+)/$', 
-        NoticiaViewSet.as_view({'get': 'retrieve'}), 
+        NoticiaViewSet.as_view({
+            'get': 'retrieve',
+            'put': 'update',
+            'patch': 'partial_update',
+            'delete': 'destroy'
+        }), 
         name='noticia-detail'),
     
     # 4. Ruta de detalle solo con ID (al final)
-    path('noticias/<int:pk>/', NoticiaViewSet.as_view({'get': 'retrieve'}), name='noticia-detail-id-only'),
+    # ✅ CORREGIDO: Agregados PUT, PATCH, DELETE
+    path('noticias/<int:pk>/', 
+        NoticiaViewSet.as_view({
+            'get': 'retrieve',
+            'put': 'update',
+            'patch': 'partial_update',
+            'delete': 'destroy'
+        }), 
+        name='noticia-detail-id-only'),
     
     # ===== FIN DE RUTAS DE NOTICIAS =====
     
