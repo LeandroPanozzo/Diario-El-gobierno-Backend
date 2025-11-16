@@ -796,3 +796,93 @@ El equipo de [Nombre del Diario]
         except Exception as e:
             print(f"Error al enviar email de agradecimiento: {str(e)}")
             
+
+class MensajeGlobal(models.Model):
+    DURACION_CHOICES = [
+        (1, '1 día'),
+        (5, '5 días'),
+        (7, '7 días (1 semana)'),
+    ]
+    
+    trabajador = models.ForeignKey(
+        'Trabajador', 
+        on_delete=models.CASCADE, 
+        related_name='mensajes_enviados'
+    )
+    mensaje = models.TextField(
+        max_length=500,
+        help_text="Máximo 500 caracteres"
+    )
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_expiracion = models.DateTimeField()
+    duracion_dias = models.IntegerField(
+        choices=DURACION_CHOICES,
+        default=7,
+        help_text="Duración del mensaje antes de ser eliminado"
+    )
+    activo = models.BooleanField(default=True)
+    
+    class Meta:
+        ordering = ['-fecha_creacion']
+        verbose_name = 'Mensaje Global'
+        verbose_name_plural = 'Mensajes Globales'
+        indexes = [
+            models.Index(fields=['fecha_expiracion', 'activo']),
+            models.Index(fields=['-fecha_creacion']),
+        ]
+    
+    def save(self, *args, **kwargs):
+        # Calcular fecha de expiración automáticamente
+        if not self.fecha_expiracion:
+            self.fecha_expiracion = timezone.now() + timedelta(days=self.duracion_dias)
+        super().save(*args, **kwargs)
+    
+    def esta_expirado(self):
+        """Verifica si el mensaje ha expirado"""
+        return timezone.now() > self.fecha_expiracion
+    
+    def tiempo_restante(self):
+        """Retorna el tiempo restante en formato legible"""
+        if self.esta_expirado():
+            return "Expirado"
+        
+        diferencia = self.fecha_expiracion - timezone.now()
+        dias = diferencia.days
+        horas = diferencia.seconds // 3600
+        
+        if dias > 0:
+            return f"{dias} día{'s' if dias != 1 else ''}"
+        elif horas > 0:
+            return f"{horas} hora{'s' if horas != 1 else ''}"
+        else:
+            minutos = diferencia.seconds // 60
+            return f"{minutos} minuto{'s' if minutos != 1 else ''}"
+    
+    def __str__(self):
+        return f"{self.trabajador.nombre} - {self.mensaje[:50]}..."
+
+
+class RespuestaMensajeGlobal(models.Model):
+    mensaje_global = models.ForeignKey(
+        'MensajeGlobal',
+        on_delete=models.CASCADE,
+        related_name='respuestas'
+    )
+    trabajador = models.ForeignKey(
+        'Trabajador',
+        on_delete=models.CASCADE,
+        related_name='respuestas_enviadas'
+    )
+    respuesta = models.TextField(
+        max_length=300,
+        help_text="Máximo 300 caracteres"
+    )
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['fecha_creacion']
+        verbose_name = 'Respuesta a Mensaje Global'
+        verbose_name_plural = 'Respuestas a Mensajes Globales'
+    
+    def __str__(self):
+        return f"{self.trabajador.nombre} respondió a {self.mensaje_global.trabajador.nombre}"

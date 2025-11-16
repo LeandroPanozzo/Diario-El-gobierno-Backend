@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Donacion, Rol, Trabajador, UserProfile, Usuario,  upload_to_imgur, Noticia, Comentario, EstadoPublicacion, Imagen, Publicidad
+from .models import Donacion, MensajeGlobal, RespuestaMensajeGlobal, Rol, Trabajador, UserProfile, Usuario,  upload_to_imgur, Noticia, Comentario, EstadoPublicacion, Imagen, Publicidad
 from django.contrib.auth import get_user_model
 from django.contrib.auth import authenticate
 from rest_framework import generics
@@ -449,3 +449,68 @@ class DonacionSerializer(serializers.ModelSerializer):
             donacion.save()
         
         return donacion
+    
+
+class RespuestaMensajeGlobalSerializer(serializers.ModelSerializer):
+    trabajador_nombre = serializers.SerializerMethodField()
+    trabajador_apellido = serializers.SerializerMethodField()
+    trabajador_foto = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = RespuestaMensajeGlobal
+        fields = [
+            'id', 'respuesta', 'fecha_creacion',
+            'trabajador_nombre', 'trabajador_apellido', 'trabajador_foto'
+        ]
+        read_only_fields = ['fecha_creacion']
+    
+    def get_trabajador_nombre(self, obj):
+        return obj.trabajador.nombre
+    
+    def get_trabajador_apellido(self, obj):
+        return obj.trabajador.apellido
+    
+    def get_trabajador_foto(self, obj):
+        return obj.trabajador.get_foto_perfil()
+
+
+class MensajeGlobalSerializer(serializers.ModelSerializer):
+    trabajador_nombre = serializers.SerializerMethodField()
+    trabajador_apellido = serializers.SerializerMethodField()
+    trabajador_foto = serializers.SerializerMethodField()
+    respuestas = RespuestaMensajeGlobalSerializer(many=True, read_only=True)
+    tiempo_restante = serializers.SerializerMethodField()
+    total_respuestas = serializers.SerializerMethodField()
+    esta_expirado = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = MensajeGlobal
+        fields = [
+            'id', 'mensaje', 'fecha_creacion', 'fecha_expiracion',
+            'duracion_dias', 'activo', 'trabajador_nombre', 
+            'trabajador_apellido', 'trabajador_foto', 'respuestas',
+            'tiempo_restante', 'total_respuestas', 'esta_expirado'
+        ]
+        read_only_fields = ['fecha_creacion', 'fecha_expiracion', 'activo']
+    
+    def get_trabajador_nombre(self, obj):
+        return obj.trabajador.nombre
+    
+    def get_trabajador_apellido(self, obj):
+        return obj.trabajador.apellido
+    
+    def get_trabajador_foto(self, obj):
+        return obj.trabajador.get_foto_perfil()
+    
+    def get_tiempo_restante(self, obj):
+        return obj.tiempo_restante()
+    
+    def get_total_respuestas(self, obj):
+        return obj.respuestas.count()
+    
+    def get_esta_expirado(self, obj):
+        return obj.esta_expirado()
+    
+    def create(self, validated_data):
+        # El trabajador se asigna automáticamente desde la vista
+        return MensajeGlobal.objects.create(**validated_data)

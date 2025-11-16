@@ -3,6 +3,7 @@ from django.urls import path, include, re_path
 from . import views
 from .views import (
     DonacionViewSet,
+    MensajeGlobalViewSet,
     RolViewSet,
     TrabajadorViewSet,
     UsuarioViewSet,
@@ -45,6 +46,8 @@ router.register(r'imagenes', ImagenViewSet)
 router.register(r'publicidades', PublicidadViewSet)
 router.register(r'noticias', NoticiaViewSet, basename='noticias')
 router.register(r'donaciones', DonacionViewSet, basename='donaciones')
+# Dentro de la sección donde defines el router
+router.register(r'mensajes-globales', MensajeGlobalViewSet, basename='mensajes-globales')
 
 urlpatterns = [
     path('', redirect_to_home, name='redirect_to_home'),

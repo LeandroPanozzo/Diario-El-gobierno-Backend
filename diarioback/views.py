@@ -1068,3 +1068,210 @@ class DonacionViewSet(viewsets.ModelViewSet):
             return [permissions.IsAdminUser()]
         # Cualquiera puede crear
         return [AllowAny()]
+    
+
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from django.utils import timezone
+from .models import MensajeGlobal, RespuestaMensajeGlobal, Trabajador
+from .serializers import MensajeGlobalSerializer, RespuestaMensajeGlobalSerializer
+
+
+class MensajeGlobalViewSet(viewsets.ModelViewSet):
+    serializer_class = MensajeGlobalSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        """
+        Retorna solo mensajes activos y no expirados.
+        Limpia mensajes expirados automáticamente.
+        """
+        # Primero, marcar como inactivos los mensajes expirados
+        MensajeGlobal.objects.filter(
+            fecha_expiracion__lte=timezone.now(),
+            activo=True
+        ).update(activo=False)
+        
+        # Opcional: Eliminar mensajes expirados hace más de 1 día
+        fecha_limite = timezone.now() - timedelta(days=1)
+        MensajeGlobal.objects.filter(
+            fecha_expiracion__lte=fecha_limite,
+            activo=False
+        ).delete()
+        
+        # Retornar solo mensajes activos
+        return MensajeGlobal.objects.filter(activo=True).prefetch_related('respuestas')
+    
+    def perform_create(self, serializer):
+        """Asigna automáticamente el trabajador del usuario autenticado"""
+        try:
+            trabajador = Trabajador.objects.get(user=self.request.user)
+            serializer.save(trabajador=trabajador)
+        except Trabajador.DoesNotExist:
+            raise PermissionDenied("Solo los trabajadores pueden crear mensajes globales.")
+    
+    def create(self, request, *args, **kwargs):
+        """Valida que el usuario sea un trabajador antes de crear"""
+        try:
+            trabajador = Trabajador.objects.get(user=request.user)
+        except Trabajador.DoesNotExist:
+            return Response(
+                {"error": "Solo los trabajadores pueden crear mensajes globales."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
+    def destroy(self, request, *args, **kwargs):
+        """Solo el autor puede eliminar su mensaje"""
+        mensaje = self.get_object()
+        
+        try:
+            trabajador = Trabajador.objects.get(user=request.user)
+            
+            # Verificar que el trabajador sea el autor
+            if mensaje.trabajador != trabajador:
+                return Response(
+                    {"error": "Solo puedes eliminar tus propios mensajes."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            mensaje.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+            
+        except Trabajador.DoesNotExist:
+            return Response(
+                {"error": "Usuario no autorizado."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+    
+    @action(detail=True, methods=['post'])
+    def responder(self, request, pk=None):
+        """Permite a un trabajador responder a un mensaje global"""
+        mensaje = self.get_object()
+        
+        # Verificar que el mensaje no esté expirado
+        if mensaje.esta_expirado():
+            return Response(
+                {"error": "No puedes responder a un mensaje expirado."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            trabajador = Trabajador.objects.get(user=request.user)
+        except Trabajador.DoesNotExist:
+            return Response(
+                {"error": "Solo los trabajadores pueden responder."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Validar que la respuesta no esté vacía
+        respuesta_texto = request.data.get('respuesta', '').strip()
+        if not respuesta_texto:
+            return Response(
+                {"error": "La respuesta no puede estar vacía."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Crear la respuesta
+        respuesta = RespuestaMensajeGlobal.objects.create(
+            mensaje_global=mensaje,
+            trabajador=trabajador,
+            respuesta=respuesta_texto
+        )
+        
+        serializer = RespuestaMensajeGlobalSerializer(respuesta)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
+    @action(detail=True, methods=['delete'])
+    def eliminar_respuesta(self, request, pk=None):
+        """Permite eliminar una respuesta propia"""
+        respuesta_id = request.data.get('respuesta_id')
+        
+        if not respuesta_id:
+            return Response(
+                {"error": "Se requiere el ID de la respuesta."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            trabajador = Trabajador.objects.get(user=request.user)
+            respuesta = RespuestaMensajeGlobal.objects.get(
+                id=respuesta_id,
+                mensaje_global_id=pk
+            )
+            
+            # Verificar que el trabajador sea el autor de la respuesta
+            if respuesta.trabajador != trabajador:
+                return Response(
+                    {"error": "Solo puedes eliminar tus propias respuestas."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            respuesta.delete()
+            return Response(
+                {"message": "Respuesta eliminada exitosamente."},
+                status=status.HTTP_204_NO_CONTENT
+            )
+            
+        except Trabajador.DoesNotExist:
+            return Response(
+                {"error": "Usuario no autorizado."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except RespuestaMensajeGlobal.DoesNotExist:
+            return Response(
+                {"error": "Respuesta no encontrada."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    @action(detail=False, methods=['get'])
+    def mis_mensajes(self, request):
+        """Retorna solo los mensajes del trabajador autenticado"""
+        try:
+            trabajador = Trabajador.objects.get(user=request.user)
+            mensajes = self.get_queryset().filter(trabajador=trabajador)
+            serializer = self.get_serializer(mensajes, many=True)
+            return Response(serializer.data)
+        except Trabajador.DoesNotExist:
+            return Response(
+                {"error": "Usuario no autorizado."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+    
+    @action(detail=False, methods=['post'])
+    def limpiar_expirados(self, request):
+        """Limpia manualmente todos los mensajes expirados (solo para testing)"""
+        try:
+            trabajador = Trabajador.objects.get(user=request.user)
+            
+            # Marcar como inactivos
+            actualizados = MensajeGlobal.objects.filter(
+                fecha_expiracion__lte=timezone.now(),
+                activo=True
+            ).update(activo=False)
+            
+            # Eliminar los muy antiguos
+            fecha_limite = timezone.now() - timedelta(days=1)
+            eliminados = MensajeGlobal.objects.filter(
+                fecha_expiracion__lte=fecha_limite,
+                activo=False
+            ).delete()
+            
+            return Response({
+                "message": "Limpieza completada",
+                "mensajes_desactivados": actualizados,
+                "mensajes_eliminados": eliminados[0]
+            })
+            
+        except Trabajador.DoesNotExist:
+            return Response(
+                {"error": "Usuario no autorizado."},
+                status=status.HTTP_403_FORBIDDEN
+            )

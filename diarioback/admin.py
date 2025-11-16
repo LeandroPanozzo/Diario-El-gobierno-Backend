@@ -634,3 +634,61 @@ class DonacionAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         """Deshabilita agregar donaciones desde el admin"""
         return False
+    
+from .models import MensajeGlobal, RespuestaMensajeGlobal
+
+class RespuestaMensajeInline(admin.TabularInline):
+    model = RespuestaMensajeGlobal
+    extra = 0
+    readonly_fields = ('trabajador', 'respuesta', 'fecha_creacion')
+    can_delete = True
+    
+    def has_add_permission(self, request, obj=None):
+        return False
+
+@admin.register(MensajeGlobal)
+class MensajeGlobalAdmin(StaffPermissionMixin, admin.ModelAdmin):
+    list_display = (
+        'trabajador', 'mensaje_corto', 'duracion_dias',
+        'fecha_creacion', 'tiempo_restante_display', 
+        'total_respuestas', 'activo'
+    )
+    list_filter = ('activo', 'duracion_dias', 'fecha_creacion')
+    search_fields = ('trabajador__nombre', 'trabajador__apellido', 'mensaje')
+    readonly_fields = ('fecha_creacion', 'fecha_expiracion', 'tiempo_restante_display')
+    inlines = [RespuestaMensajeInline]
+    
+    fieldsets = (
+        ('Información del Mensaje', {
+            'fields': ('trabajador', 'mensaje', 'duracion_dias')
+        }),
+        ('Fechas', {
+            'fields': ('fecha_creacion', 'fecha_expiracion', 'tiempo_restante_display')
+        }),
+        ('Estado', {
+            'fields': ('activo',)
+        })
+    )
+    
+    def mensaje_corto(self, obj):
+        return obj.mensaje[:50] + '...' if len(obj.mensaje) > 50 else obj.mensaje
+    mensaje_corto.short_description = 'Mensaje'
+    
+    def tiempo_restante_display(self, obj):
+        return obj.tiempo_restante()
+    tiempo_restante_display.short_description = 'Tiempo Restante'
+    
+    def total_respuestas(self, obj):
+        return obj.respuestas.count()
+    total_respuestas.short_description = 'Respuestas'
+
+@admin.register(RespuestaMensajeGlobal)
+class RespuestaMensajeGlobalAdmin(StaffPermissionMixin, admin.ModelAdmin):
+    list_display = ('trabajador', 'mensaje_global', 'respuesta_corta', 'fecha_creacion')
+    list_filter = ('fecha_creacion',)
+    search_fields = ('trabajador__nombre', 'respuesta')
+    readonly_fields = ('fecha_creacion',)
+    
+    def respuesta_corta(self, obj):
+        return obj.respuesta[:50] + '...' if len(obj.respuesta) > 50 else obj.respuesta
+    respuesta_corta.short_description = 'Respuesta'
