@@ -166,24 +166,21 @@ class TrabajadorForm(forms.ModelForm):
         if instance.apellido:
             instance.apellido = remover_acentos(instance.apellido)
         
+        # ✅ CRÍTICO: Verificar si ya existe un UserProfile para este user
         if not instance.user_profile:
-            instance.user_profile = UserProfile.objects.create(
-                nombre=instance.nombre,
-                apellido=instance.apellido,
-                es_trabajador=True
-            )
-        else:
-            # Actualizar nombre y apellido en el perfil también
-            instance.user_profile.nombre = instance.nombre
-            instance.user_profile.apellido = instance.apellido
-            if not instance.user_profile.es_trabajador:
-                instance.user_profile.es_trabajador = True
-            instance.user_profile.save()
-
+            try:
+                existing_profile = UserProfile.objects.get(user=instance.user)
+                instance.user_profile = existing_profile
+                print(f"✅ Usando UserProfile existente ID={existing_profile.id}")
+            except UserProfile.DoesNotExist:
+                pass  # Se creará en el método save() del modelo
+        
+        # Manejar foto temporal
         foto_temp = self.cleaned_data.get('foto_perfil_temp')
         if foto_temp:
             instance.foto_perfil_temp = foto_temp
 
+        # ✅ SOLO GUARDAR - La sincronización la hace el método save() del modelo
         if commit:
             instance.save()
             
@@ -238,9 +235,20 @@ class TrabajadorAdmin(StaffPermissionMixin, admin.ModelAdmin):
         if obj.apellido:
             obj.apellido = remover_acentos(obj.apellido)
         
+        # Sincronizar correo y contraseña
         obj.correo = obj.user.email
         obj.contraseña = obj.user.password
-        super().save_model(request, obj, form, change)
+        
+        # ✅ IMPORTANTE: Llamar a save() normalmente
+        # Esto ejecutará el método save() del modelo que sincroniza UserProfile
+        obj.save()
+        
+        # ✅ VERIFICAR que se sincronizó (debug)
+        if obj.user_profile:
+            obj.user_profile.refresh_from_db()
+            print(f"✅ ADMIN: Guardado Trabajador")
+            print(f"   Trabajador: {obj.nombre} {obj.apellido}")
+            print(f"   UserProfile: {obj.user_profile.nombre} {obj.user_profile.apellido}")
 
 # ============================================================================
 # ADMINISTRACIÓN DE USUARIO

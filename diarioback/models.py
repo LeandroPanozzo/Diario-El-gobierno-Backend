@@ -65,28 +65,63 @@ class Trabajador(models.Model):
     def save(self, *args, **kwargs):
         # Obtener la instancia anterior si existe
         old_instance = None
-        if self.pk:  # Solo si ya existe una instancia guardada previamente
+        if self.pk:
             try:
                 old_instance = Trabajador.objects.get(pk=self.pk)
             except Trabajador.DoesNotExist:
                 pass
 
-        # Crear un nuevo UserProfile si no existe
-        if not self.user_profile:
-            self.user_profile = UserProfile.objects.create(
-                nombre=self.nombre,
-                apellido=self.apellido
-            )
-
-        # Manejar la imagen de perfil (local o URL)
+        # Manejar la imagen de perfil (local o URL) ANTES de todo
         self._handle_image('foto_perfil', 'foto_perfil_local')
 
         # Si no hay imagen local ni URL, asignar la imagen por defecto
         if not self.foto_perfil and not self.foto_perfil_local:
             self.foto_perfil = self.DEFAULT_FOTO_PERFIL_URL
 
-        # Llamar a la versión original del método `save`
+        # ✅ CRÍTICO: Verificar si ya existe un UserProfile para este user
+        try:
+            existing_profile = UserProfile.objects.get(user=self.user)
+            # Si existe, usar ese en lugar de crear uno nuevo
+            if self.user_profile != existing_profile:
+                print(f"⚠️  Corrigiendo: usando UserProfile existente ID={existing_profile.id}")
+                self.user_profile = existing_profile
+        except UserProfile.DoesNotExist:
+            pass
+
+        # ✅ PRIMERO: Guardar el Trabajador
         super().save(*args, **kwargs)
+
+        # ✅ SEGUNDO: Crear o actualizar UserProfile DESPUÉS de guardar
+        if not self.user_profile:
+            print(f"🆕 Creando UserProfile nuevo...")
+            # ✅ CRÍTICO: SIEMPRE asignar el user
+            self.user_profile = UserProfile.objects.create(
+                user=self.user,  # ← IMPORTANTE: Asignar el user
+                nombre=self.nombre,
+                apellido=self.apellido,
+                foto_perfil=self.foto_perfil or '',
+                es_trabajador=True
+            )
+            # Guardar la referencia
+            super().save(update_fields=['user_profile'])
+            print(f"   ✅ UserProfile creado con ID={self.user_profile.id}, user={self.user}")
+        else:
+            # ✅ VERIFICAR que user_profile tenga el user correcto asignado
+            if self.user_profile.user != self.user:
+                print(f"⚠️  Corrigiendo: UserProfile.user era {self.user_profile.user}, cambiando a {self.user}")
+                self.user_profile.user = self.user
+            
+            # ✅ ACTUALIZAR UserProfile existente
+            self.user_profile.nombre = self.nombre
+            self.user_profile.apellido = self.apellido
+            self.user_profile.es_trabajador = True
+            
+            # Sincronizar foto si existe
+            if self.foto_perfil:
+                self.user_profile.foto_perfil = self.foto_perfil
+            
+            self.user_profile.save()
+            print(f"✅ Sincronizado: Trabajador.nombre={self.nombre} -> UserProfile.nombre={self.user_profile.nombre}")
 
         # Eliminar la imagen anterior de Imgur si ha sido reemplazada
         if old_instance:

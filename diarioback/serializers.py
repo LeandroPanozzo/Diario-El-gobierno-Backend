@@ -142,10 +142,16 @@ class UserProfileSerializer(serializers.ModelSerializer):
     foto_perfil = serializers.CharField(required=False, allow_blank=True)
     descripcion_usuario = serializers.CharField(required=False, allow_blank=True)
     es_trabajador = serializers.BooleanField(read_only=True)
+    
+    # ✅ AGREGAR ESTAS LÍNEAS - Campos read-only
+    nombre = serializers.CharField(read_only=True)
+    apellido = serializers.CharField(read_only=True)
 
     class Meta:
         model = UserProfile
         fields = ['id', 'nombre', 'apellido', 'foto_perfil', 'foto_perfil_local', 'descripcion_usuario', 'es_trabajador']
+        # ✅ AGREGAR ESTA LÍNEA - Especificar campos read-only
+        read_only_fields = ['nombre', 'apellido', 'es_trabajador']
 
     def validate_foto_perfil(self, value):
         if value.startswith(settings.MEDIA_URL):
@@ -158,6 +164,10 @@ class UserProfileSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         foto_perfil_local = validated_data.pop('foto_perfil_local', None)
         foto_perfil = validated_data.get('foto_perfil', '')
+        
+        # ✅ AGREGAR ESTAS LÍNEAS - Evitar que se actualicen nombre y apellido
+        validated_data.pop('nombre', None)
+        validated_data.pop('apellido', None)
 
         # Convertir el path relativo a URL absoluta si es necesario
         if foto_perfil.startswith(settings.MEDIA_URL):
