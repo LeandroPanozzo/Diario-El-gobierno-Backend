@@ -557,7 +557,60 @@ class Noticia(models.Model):
         return self.visitas.filter(fecha__gte=hace_una_semana).count()
 
     class Meta:
-        ordering = ['-contador_visitas']  # Ordena por defecto por número de visitas
+        ordering = ['-fecha_publicacion']
+        
+        # 🚀 ÍNDICES OPTIMIZADOS PARA RENDIMIENTO
+        indexes = [
+            # Índice compuesto para filtrar por autor y estado (consulta más común)
+            models.Index(fields=['autor', 'estado', '-fecha_publicacion'], 
+                        name='idx_autor_estado_fecha'),
+            
+            # Índice para el endpoint por_trabajador (buscar por autor)
+            models.Index(fields=['autor', '-fecha_publicacion'], 
+                        name='idx_autor_fecha'),
+            
+            # Índice para filtrar por estado y ordenar por fecha
+            models.Index(fields=['estado', '-fecha_publicacion'], 
+                        name='idx_estado_fecha'),
+            
+            # Índice para búsquedas por nombre
+            models.Index(fields=['nombre_noticia'], 
+                        name='idx_nombre_noticia'),
+            
+            # Índice para el slug (ya debe ser único, pero esto acelera búsquedas)
+            models.Index(fields=['slug'], 
+                        name='idx_slug'),
+            
+            # Índice para ordenar por fecha de publicación
+            models.Index(fields=['-fecha_publicacion'], 
+                        name='idx_fecha_pub_desc'),
+            
+            # Índice para noticias más vistas (contador_visitas)
+            models.Index(fields=['-contador_visitas', 'estado'], 
+                        name='idx_visitas_estado'),
+            
+            # Índice para noticias más vistas históricas
+            models.Index(fields=['-contador_visitas_total', 'estado'], 
+                        name='idx_visitas_total_estado'),
+            
+            # Índice para última actualización del contador
+            models.Index(fields=['ultima_actualizacion_contador'], 
+                        name='idx_ultima_act_contador'),
+            
+            # Índice compuesto para búsquedas con filtros múltiples
+            models.Index(fields=['estado', 'autor', '-fecha_publicacion'], 
+                        name='idx_estado_autor_fecha'),
+            
+            # Índice para buscar por categorías (si usas búsquedas frecuentes)
+            models.Index(fields=['categorias'], 
+                        name='idx_categorias'),
+        ]
+        
+        # Restricciones adicionales
+        constraints = [
+            # Asegurar que el slug sea único
+            models.UniqueConstraint(fields=['slug'], name='unique_slug'),
+        ]
 
     @staticmethod
     def validate_categorias(value):

@@ -114,47 +114,68 @@ from django.shortcuts import get_object_or_404
 def upload_to_imgur(image):
     # Implementación del servicio de subida a Imgur
     pass
+from rest_framework import viewsets, filters, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.pagination import PageNumberPagination
+from django.utils import timezone
+from datetime import timedelta
+from django.db.models import Q, Count, Prefetch
+from django.shortcuts import get_object_or_404
+from .models import Noticia, Trabajador, EstadoPublicacion, NoticiaVisita
+from .serializers import NoticiaSerializer
+from .imgur_utils import upload_to_imgur
+
+class NoticiasPagination(PageNumberPagination):
+    """Paginación optimizada para noticias"""
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
 class NoticiaViewSet(viewsets.ModelViewSet):
-    queryset = Noticia.objects.all()
     serializer_class = NoticiaSerializer
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ['fecha_publicacion', 'contador_visitas']
-    ordering = ['-fecha_publicacion']  # Default ordering
-    lookup_field = 'pk'  # Default lookup field
-    lookup_value_regex = r'[0-9]+(?:-[a-zA-Z0-9-_]+)?'  # Accept both ID and ID-slug formats
+    ordering = ['-fecha_publicacion']
+    lookup_field = 'pk'
+    lookup_value_regex = r'[0-9]+(?:-[a-zA-Z0-9-_]+)?'
+    pagination_class = NoticiasPagination
+    
     def get_queryset(self):
         """
-        Customizes the queryset based on query parameters to support efficient filtering.
-        This avoids retrieving all records every time.
+        ✅ OPTIMIZACIÓN CRÍTICA: Usa select_related y prefetch_related
+        para evitar queries N+1
         """
-        queryset = Noticia.objects.all()
+        queryset = Noticia.objects.select_related(
+            'autor',      # ForeignKey - Una query JOIN
+            'estado'      # ForeignKey - Una query JOIN
+        ).prefetch_related(
+            'editores_en_jefe'  # ManyToMany - Una query separada optimizada
+        )
         
-        # Filter by autor (NEW - ADD THIS)
+        # Filtrar por autor si se especifica
         autor = self.request.query_params.get('autor')
         if autor:
             queryset = queryset.filter(autor=autor)
         
-        # Filter by estado (publication status)
+        # Filtrar por estado (publication status)
         estado = self.request.query_params.get('estado')
         if estado:
             queryset = queryset.filter(estado=estado)
         
-        # Filter by categoria (one or multiple categories)
+        # Filtrar por categoría (una o múltiples categorías)
         categoria = self.request.query_params.get('categoria')
         if categoria:
-            # Check if it's a comma-separated list
             categorias = categoria.split(',')
             if len(categorias) > 1:
-                # Create a complex query for multiple categories
                 category_query = Q()
                 for cat in categorias:
-                    category_query |= Q(categorias__contains=cat)
+                    category_query |= Q(categorias__contains=cat.strip())
                 queryset = queryset.filter(category_query)
             else:
-                # Simple single category filter
                 queryset = queryset.filter(categorias__contains=categoria)
         
-        # Filter by date range
+        # Filtrar por rango de fechas
         fecha_desde = self.request.query_params.get('fecha_desde')
         if fecha_desde:
             queryset = queryset.filter(fecha_publicacion__gte=fecha_desde)
@@ -163,28 +184,22 @@ class NoticiaViewSet(viewsets.ModelViewSet):
         if fecha_hasta:
             queryset = queryset.filter(fecha_publicacion__lte=fecha_hasta)
         
-        # Include author and editor information if requested
-        include_autor = self.request.query_params.get('include_autor')
-        include_editor = self.request.query_params.get('include_editor')
-        
-        # Note: In a real implementation, you would use prefetch_related and select_related
-        # here to optimize the query instead of making additional queries for each article
-        
-        # IMPORTANT: Removed the limit slicing from here since it conflicts with ordering
-        # The limit will be applied after ordering in list() and other methods
-            
         return queryset
 
     def list(self, request, *args, **kwargs):
-        """Override list method to apply limit after ordering"""
+        """
+        ✅ OPTIMIZACIÓN: Usa paginación real del backend
+        """
         queryset = self.filter_queryset(self.get_queryset())
         
-        # Apply limit from request params after filtering and ordering
+        # Si se solicita sin paginación (limit específico)
         limit = self.request.query_params.get('limit')
         if limit and limit.isdigit():
             queryset = queryset[:int(limit)]
+            serializer = self.get_serializer(queryset, many=True)
+            return Response(serializer.data)
         
-        # Use pagination if configured and not explicitly limited
+        # Con paginación estándar
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
@@ -194,7 +209,9 @@ class NoticiaViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     def retrieve(self, request, *args, **kwargs):
+        """Optimizado con prefetch y contador de visitas"""
         instance = self.get_object()
+        
         # Obtiene la IP del cliente
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
@@ -212,9 +229,10 @@ class NoticiaViewSet(viewsets.ModelViewSet):
     def buscar(self, request):
         """
         Búsqueda avanzada de noticias con múltiples criterios
+        Uso: /api/noticias/buscar/?q=texto&type=all&limit=20
         """
         query = request.query_params.get('q', '').strip()
-        search_type = request.query_params.get('type', 'all')  # all, title, content, etc.
+        search_type = request.query_params.get('type', 'all')
         
         if not query:
             return Response(
@@ -234,8 +252,8 @@ class NoticiaViewSet(viewsets.ModelViewSet):
         fecha_desde = request.query_params.get('fecha_desde')
         fecha_hasta = request.query_params.get('fecha_hasta')
         
-        # Base queryset
-        queryset = self.queryset.filter(estado=estado)
+        # Base queryset optimizado
+        queryset = self.get_queryset().filter(estado=estado)
         
         # Build search query based on search type
         search_query = Q()
@@ -269,11 +287,11 @@ class NoticiaViewSet(viewsets.ModelViewSet):
         # Order by publication date (most recent first)
         queryset = queryset.order_by('-fecha_publicacion')
         
+        # Get total count before limiting
+        total_count = queryset.count()
+        
         # Apply limit
         queryset = queryset[:limit]
-        
-        # Get total count before limiting for pagination info
-        total_count = queryset.count()
         
         serializer = self.get_serializer(queryset, many=True)
         
@@ -288,38 +306,30 @@ class NoticiaViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def mas_vistas(self, request):
         """
-        Return the most viewed news from the past week.
-        Optimized to limit results and preload related data.
+        Noticias más vistas de la última semana
+        Uso: /api/noticias/mas_vistas/?limit=10
         """
-        # Get limit from query params or default to 10
         limit = request.query_params.get('limit', 10)
         try:
             limit = int(limit)
         except ValueError:
             limit = 10
             
-        # Calculate one week ago
         hace_una_semana = timezone.now() - timedelta(days=7)
         
-        # Filter by estado and date, order by visit count
-        # Don't slice here, wait until all filtering and ordering is done
-        noticias_mas_vistas = self.queryset.filter(
-            estado=3,  # Published status
+        noticias_mas_vistas = self.get_queryset().filter(
+            estado=3,
             ultima_actualizacion_contador__gte=hace_una_semana
-        ).order_by('-contador_visitas')
-        
-        # Apply limit after all ordering is done
-        noticias_mas_vistas = noticias_mas_vistas[:limit]
-        
-        # Optimize with prefetch_related if needed
-        # noticias_mas_vistas = noticias_mas_vistas.prefetch_related('autor', 'editores_en_jefe')
+        ).order_by('-contador_visitas')[:limit]
         
         serializer = self.get_serializer(noticias_mas_vistas, many=True)
         return Response(serializer.data)
+
     @action(detail=False, methods=['get'])
     def mas_leidas(self, request):
         """
-        Return the most read news of all time (contador_visitas_total).
+        Noticias más leídas de todos los tiempos
+        Uso: /api/noticias/mas_leidas/?limit=10
         """
         limit = request.query_params.get('limit', 10)
         try:
@@ -327,9 +337,8 @@ class NoticiaViewSet(viewsets.ModelViewSet):
         except ValueError:
             limit = 10
         
-        # Filter by estado and order by total visit count
-        noticias_mas_leidas = self.queryset.filter(
-            estado=3  # Published status
+        noticias_mas_leidas = self.get_queryset().filter(
+            estado=3
         ).order_by('-contador_visitas_total')[:limit]
         
         serializer = self.get_serializer(noticias_mas_leidas, many=True)
@@ -337,55 +346,49 @@ class NoticiaViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def populares_semana(self, request):
-        """
-        Alias para mas_vistas - noticias más populares de la semana
-        """
+        """Alias para mas_vistas"""
         return self.mas_vistas(request)
 
     @action(detail=False, methods=['get'])
     def populares_historico(self, request):
-        """
-        Alias para mas_leidas - noticias más populares de todos los tiempos
-        """
+        """Alias para mas_leidas"""
         return self.mas_leidas(request)
 
     @action(detail=False, methods=['get'])
     def estadisticas_visitas(self, request):
         """
-        Retorna estadísticas generales de visitas
+        Estadísticas generales de visitas
+        Uso: /api/noticias/estadisticas_visitas/
         """
-        from django.db.models import Sum, Avg, Max
+        from django.db.models import Sum, Avg, Max, Count
         
-        stats = self.queryset.filter(estado=3).aggregate(
+        stats = self.get_queryset().filter(estado=3).aggregate(
             total_visitas_semanales=Sum('contador_visitas'),
             total_visitas_historicas=Sum('contador_visitas_total'),
             promedio_visitas_semanales=Avg('contador_visitas'),
             promedio_visitas_historicas=Avg('contador_visitas_total'),
             max_visitas_semanales=Max('contador_visitas'),
             max_visitas_historicas=Max('contador_visitas_total'),
-            total_noticias=models.Count('id')
+            total_noticias=Count('id')
         )
         
         return Response(stats)
+
     @action(detail=False, methods=['get'])
     def recientes(self, request):
         """
-        Return the most recent news.
+        Noticias más recientes
+        Uso: /api/noticias/recientes/?limit=5
         """
-        # Get limit from query params or default to 5
         limit = request.query_params.get('limit', 5)
         try:
             limit = int(limit)
         except ValueError:
             limit = 5
             
-        # Filter by estado, order by publication date
-        noticias_recientes = self.queryset.filter(
-            estado=3  # Published status
-        ).order_by('-fecha_publicacion')
-        
-        # Apply limit after ordering
-        noticias_recientes = noticias_recientes[:limit]
+        noticias_recientes = self.get_queryset().filter(
+            estado=3
+        ).order_by('-fecha_publicacion')[:limit]
         
         serializer = self.get_serializer(noticias_recientes, many=True)
         return Response(serializer.data)
@@ -393,114 +396,121 @@ class NoticiaViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def destacadas(self, request):
         """
-        Return featured news for the carousel.
+        Noticias destacadas para el carousel
+        Uso: /api/noticias/destacadas/?limit=12
         """
-        # Get limit from query params or default to 12 (for 4 slides with 3 articles each)
         limit = request.query_params.get('limit', 12)
         try:
             limit = int(limit)
         except ValueError:
             limit = 12
             
-        # Filter by estado, order by publication date to get the most recent
-        noticias_destacadas = self.queryset.filter(
-            estado=3  # Published status
-        ).order_by('-fecha_publicacion')
-        
-        # Apply limit after ordering
-        noticias_destacadas = noticias_destacadas[:limit]
+        noticias_destacadas = self.get_queryset().filter(
+            estado=3
+        ).order_by('-fecha_publicacion')[:limit]
         
         serializer = self.get_serializer(noticias_destacadas, many=True)
         return Response(serializer.data)
 
     @action(detail=False, methods=['get'])
+    def por_trabajador(self, request):
+        """
+        ✅ NUEVO ENDPOINT OPTIMIZADO para cargar noticias de un trabajador específico
+        Filtra por autor O editor en jefe
+        Uso: /api/noticias/por_trabajador/?trabajador_id=6&page=1&page_size=20
+        """
+        trabajador_id = request.query_params.get('trabajador_id')
+        
+        if not trabajador_id:
+            return Response(
+                {"error": "Se requiere trabajador_id"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            trabajador_id = int(trabajador_id)
+        except ValueError:
+            return Response(
+                {"error": "trabajador_id debe ser un número"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Filtrar por autor O editor
+        queryset = self.get_queryset().filter(
+            Q(autor_id=trabajador_id) | Q(editores_en_jefe__id=trabajador_id)
+        ).distinct()
+        
+        # Usar paginación
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'])
     def politica(self, request):
-        """
-        Return news from the Politics section.
-        """
-        # Categories defined for Politics
+        """Noticias de la sección Política"""
         politica_categories = [
             'nacion', 'legislativos', 'policiales', 
             'elecciones', 'gobierno', 'provincias', 'capital'
         ]
-        
         return self._get_section_news(request, politica_categories)
 
     @action(detail=False, methods=['get'])
     def cultura(self, request):
-        """
-        Return news from the Culture section.
-        """
-        # Categories defined for Culture
+        """Noticias de la sección Cultura"""
         cultura_categories = [
             'cine', 'literatura', 'salud', 'tecnologia', 
             'eventos', 'educacion', 'efemerides', 'deporte'
         ]
-        
         return self._get_section_news(request, cultura_categories)
 
     @action(detail=False, methods=['get'])
     def economia(self, request):
-        """
-        Return news from the Economy section.
-        """
-        # Categories defined for Economy
+        """Noticias de la sección Economía"""
         economia_categories = [
             'finanzas', 'comercio_internacional', 'politica_economica', 
             'dolar', 'pobreza_e_inflacion'
         ]
-        
         return self._get_section_news(request, economia_categories)
 
     @action(detail=False, methods=['get'])
     def mundo(self, request):
-        """
-        Return news from the World section.
-        """
-        # Categories defined for World
+        """Noticias de la sección Mundo"""
         mundo_categories = [
             'estados_unidos', 'asia', 'medio_oriente', 
             'internacional', 'latinoamerica'
         ]
-        
         return self._get_section_news(request, mundo_categories)
 
     @action(detail=False, methods=['get'])
     def tipos_notas(self, request):
-        """
-        Return news by note types.
-        """
-        # Categories defined for note types
+        """Noticias por tipo de nota"""
         tipos_categories = [
             'de_analisis', 'de_opinion', 'informativas', 'entrevistas'
         ]
-        
         return self._get_section_news(request, tipos_categories)
 
     def _get_section_news(self, request, categories):
         """
-        Helper method to get news for a specific section by categories.
+        Helper method optimizado para obtener noticias por sección
         """
-        # Get limit from query params or default to 7
         limit = request.query_params.get('limit', 7)
         try:
             limit = int(limit)
         except ValueError:
             limit = 7
             
-        # Create category query
         category_query = Q()
         for cat in categories:
             category_query |= Q(categorias__contains=cat)
             
-        # Filter by estado and categories, order by publication date
-        section_news = self.queryset.filter(
+        section_news = self.get_queryset().filter(
             category_query,
-            estado=3  # Published status
-        ).order_by('-fecha_publicacion')
-        
-        # Apply limit after all filtering and ordering
-        section_news = section_news[:limit]
+            estado=3
+        ).order_by('-fecha_publicacion')[:limit]
         
         serializer = self.get_serializer(section_news, many=True)
         return Response(serializer.data)
@@ -508,42 +518,33 @@ class NoticiaViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def por_categoria(self, request):
         """
-        Return news filtered by one or more categories.
-        Support for comma-separated category list.
+        Noticias filtradas por una o más categorías
+        Uso: /api/noticias/por_categoria/?categoria=cine,literatura&limit=10
         """
-        # Get the category parameter
         categoria = request.query_params.get('categoria')
         if not categoria:
-            return Response({"error": "Se requiere el parámetro 'categoria'"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Se requiere el parámetro 'categoria'"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
             
-        # Check if it's a comma-separated list
         categorias = categoria.split(',')
-        
-        # Get estado filter (default to published)
         estado = request.query_params.get('estado', 3)
-        
-        # Get limit from query params or default
         limit = request.query_params.get('limit')
         
-        # Base queryset filtered by estado
-        queryset = self.queryset.filter(estado=estado)
+        queryset = self.get_queryset().filter(estado=estado)
         
-        # Apply category filtering
         if len(categorias) > 1:
-            # Complex query for multiple categories
             category_query = Q()
             for cat in categorias:
-                if cat.strip():  # Skip empty strings
+                if cat.strip():
                     category_query |= Q(categorias__contains=cat.strip())
             queryset = queryset.filter(category_query)
         else:
-            # Simple single category filter
             queryset = queryset.filter(categorias__contains=categoria)
             
-        # Apply ordering by publication date first
         queryset = queryset.order_by('-fecha_publicacion')
         
-        # Apply limit AFTER ordering
         if limit and limit.isdigit():
             queryset = queryset[:int(limit)]
         
@@ -552,77 +553,85 @@ class NoticiaViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def agregar_editor(self, request, pk=None):
+        """Agregar un editor a una noticia"""
         noticia = self.get_object()
         editor_id = request.data.get('editor_id')
         
         if not editor_id:
-            return Response({'error': 'Se requiere un ID de editor'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'error': 'Se requiere un ID de editor'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
             
         try:
             editor = Trabajador.objects.get(pk=editor_id)
             noticia.editores_en_jefe.add(editor)
             return Response({'success': True})
         except Trabajador.DoesNotExist:
-            return Response({'error': 'Editor no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {'error': 'Editor no encontrado'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
     
     @action(detail=True, methods=['post'])
     def eliminar_editor(self, request, pk=None):
+        """Eliminar un editor de una noticia"""
         noticia = self.get_object()
         editor_id = request.data.get('editor_id')
         
         if not editor_id:
-            return Response({'error': 'Se requiere un ID de editor'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'error': 'Se requiere un ID de editor'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
             
         try:
             editor = Trabajador.objects.get(pk=editor_id)
             noticia.editores_en_jefe.remove(editor)
             return Response({'success': True})
         except Trabajador.DoesNotExist:
-            return Response({'error': 'Editor no encontrado'}, status=status.HTTP_404_NOT_FOUND)
-    # Permite buscar por slug además de por id
-    lookup_field = 'pk'  # Mantiene pk como campo principal para compatibilidad
-    
+            return Response(
+                {'error': 'Editor no encontrado'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
     def get_object(self):
         """
-        Retrieve the object with support for pk or pk-slug format in the URL.
-        This version specifically handles long slugs.
+        Obtener objeto con soporte para pk o pk-slug en la URL
+        Maneja slugs largos correctamente
         """
-        # Get the pk value from the URL (which might be in the format 'id-slug')
         pk_value = self.kwargs.get(self.lookup_field)
-        
-        # Convert to string to handle both int and string cases
         pk_str = str(pk_value) if pk_value is not None else ''
         
-        # If it's in 'id-slug' format, extract just the numeric ID part
         if pk_str and '-' in pk_str:
-            # Split by the first hyphen only to get the ID
-            pk_parts = pk_str.split('-', 1)
-            pk = pk_parts[0]
+            pk = pk_str.split('-', 1)[0]
         else:
-            pk = pk_value  # Keep original value (could be int or string)
+            pk = pk_value
         
-        # Get the object using just the ID
         queryset = self.filter_queryset(self.get_queryset())
         obj = get_object_or_404(queryset, pk=pk)
-        
-        # Check object permissions
         self.check_object_permissions(self.request, obj)
         return obj
             
     @action(detail=False, methods=['post'])
     def upload_image(self, request):
+        """
+        Subir imagen a Imgur
+        Uso: POST /api/noticias/upload_image/ con form-data: image=<archivo>
+        """
         if 'image' not in request.FILES:
-            return Response({'error': 'No image file found'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'error': 'No image file found'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
             
         image = request.FILES['image']
         
-        # Verificar tipo de archivo
         if not image.name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
             return Response({
-                'error': 'Tipo de archivo no soportado. Por favor suba una imagen PNG, JPG, JPEG o GIF.'
+                'error': 'Tipo de archivo no soportado. Use PNG, JPG, JPEG o GIF.'
             }, status=status.HTTP_400_BAD_REQUEST)
             
-        # Subir directamente a Imgur en lugar de almacenar localmente
         uploaded_url = upload_to_imgur(image)
             
         if uploaded_url:
