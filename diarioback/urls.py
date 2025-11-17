@@ -46,7 +46,6 @@ router.register(r'imagenes', ImagenViewSet)
 router.register(r'publicidades', PublicidadViewSet)
 router.register(r'noticias', NoticiaViewSet, basename='noticias')
 router.register(r'donaciones', DonacionViewSet, basename='donaciones')
-# Dentro de la sección donde defines el router
 router.register(r'mensajes-globales', MensajeGlobalViewSet, basename='mensajes-globales')
 
 urlpatterns = [
@@ -77,6 +76,9 @@ urlpatterns = [
     path('noticias/tipos-notas/', NoticiaViewSet.as_view({'get': 'tipos_notas'}), name='noticias-tipos-notas'),
     path('noticias/por-categoria/', NoticiaViewSet.as_view({'get': 'por_categoria'}), name='noticias-por-categoria'),
     
+    # ✅ AGREGADO: Ruta crítica para cargar noticias por trabajador
+    path('noticias/por-trabajador/', NoticiaViewSet.as_view({'get': 'por_trabajador'}), name='noticias-por-trabajador'),
+    
     # 2. Rutas con parámetros de ID y acciones específicas
     path('noticias/<int:noticia_id>/comentarios/', ComentarioViewSet.as_view({'get': 'list', 'post': 'create'}), name='comentarios'),
     path('noticias/<int:noticia_id>/comentarios/<int:comment_id>/', ComentarioViewSet.as_view({'delete': 'destroy'}), name='delete_comentario'),
@@ -84,7 +86,6 @@ urlpatterns = [
     path('noticias/<int:id>/mi-reaccion/', views.mi_reaccion, name='mi_reaccion'),
     
     # 3. Rutas de detalle con slug (más específicas primero)
-    # ✅ CORREGIDO: Agregados PUT, PATCH, DELETE
     re_path(r'^noticias/(?P<pk>\d+)-(?P<slug>[\w-]+)/$', 
         NoticiaViewSet.as_view({
             'get': 'retrieve',
@@ -95,7 +96,6 @@ urlpatterns = [
         name='noticia-detail'),
     
     # 4. Ruta de detalle solo con ID (al final)
-    # ✅ CORREGIDO: Agregados PUT, PATCH, DELETE
     path('noticias/<int:pk>/', 
         NoticiaViewSet.as_view({
             'get': 'retrieve',
