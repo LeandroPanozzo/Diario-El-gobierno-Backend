@@ -192,17 +192,22 @@ class NoticiaSerializer(serializers.ModelSerializer):
         many=True
     )
     estado = serializers.PrimaryKeyRelatedField(queryset=EstadoPublicacion.objects.all())
+    
     # Define categorias as a string field that will be validated against allowed categories
     categorias = serializers.CharField(
         required=False, 
         allow_blank=True,
         allow_null=True
     )
+    
     visitas_semana = serializers.IntegerField(source='visitas_ultima_semana', read_only=True)
     conteo_reacciones = serializers.SerializerMethodField()
+    
     # Añadir campos para URL y slug
     url = serializers.SerializerMethodField(read_only=True)
     slug = serializers.CharField(read_only=True)
+    
+    # Campos de imágenes
     imagen_1 = serializers.URLField(allow_blank=True, required=False, allow_null=True)
     imagen_2 = serializers.URLField(allow_blank=True, required=False, allow_null=True)
     imagen_3 = serializers.URLField(allow_blank=True, required=False, allow_null=True)
@@ -210,7 +215,7 @@ class NoticiaSerializer(serializers.ModelSerializer):
     imagen_5 = serializers.URLField(allow_blank=True, required=False, allow_null=True)
     imagen_6 = serializers.URLField(allow_blank=True, required=False, allow_null=True)
 
-    # Add autorData and editorData fields for easier frontend access
+    # 🚀 OPTIMIZACIÓN: Siempre incluir datos del autor y editores sin queries extras
     autorData = serializers.SerializerMethodField(read_only=True)
     editoresData = serializers.SerializerMethodField(read_only=True)
 
@@ -224,7 +229,7 @@ class NoticiaSerializer(serializers.ModelSerializer):
             'estado', 'solo_para_subscriptores', 
             'contenido', 'tiene_comentarios', 
             'conteo_reacciones', 'contador_visitas', 'visitas_semana',
-            'autorData', 'editoresData', 'url', 'slug'  # Incluir nuevos campos
+            'autorData', 'editoresData', 'url', 'slug'
         ]
 
     def get_url(self, obj):
@@ -235,31 +240,29 @@ class NoticiaSerializer(serializers.ModelSerializer):
         return obj.get_conteo_reacciones()
 
     def get_autorData(self, obj):
-        """Return author data if include_autor was requested"""
-        if hasattr(self.context.get('request'), 'query_params'):
-            include_autor = self.context.get('request').query_params.get('include_autor')
-            if include_autor and include_autor.lower() == 'true':
-                if obj.autor:
-                    return {
-                        'id': obj.autor.id,
-                        'nombre': obj.autor.nombre,
-                        'apellido': obj.autor.apellido,
-                        'cargo': getattr(obj.autor, 'cargo', None),
-                    }
+        """
+        🚀 OPTIMIZADO: Siempre incluye datos del autor
+        No hace queries adicionales si usaste select_related('autor') en la vista
+        """
+        if obj.autor:
+            return {
+                'id': obj.autor.id,
+                'nombre': obj.autor.nombre,
+                'apellido': obj.autor.apellido,
+                'foto_perfil': obj.autor.get_foto_perfil(),
+            }
         return None
         
     def get_editoresData(self, obj):
-        """Return editors data if include_editor was requested"""
-        if hasattr(self.context.get('request'), 'query_params'):
-            include_editor = self.context.get('request').query_params.get('include_editor')
-            if include_editor and include_editor.lower() == 'true':
-                return [{
-                    'id': editor.id,
-                    'nombre': editor.nombre,
-                    'apellido': editor.apellido,
-                    'cargo': getattr(editor, 'cargo', None),
-                } for editor in obj.editores_en_jefe.all()]
-        return None
+        """
+        🚀 OPTIMIZADO: Siempre incluye datos de editores
+        No hace queries adicionales si usaste prefetch_related('editores_en_jefe') en la vista
+        """
+        return [{
+            'id': editor.id,
+            'nombre': editor.nombre,
+            'apellido': editor.apellido,
+        } for editor in obj.editores_en_jefe.all()]
 
     def to_internal_value(self, data):
         """
@@ -273,12 +276,6 @@ class NoticiaSerializer(serializers.ModelSerializer):
         # Crear una copia mutable de los datos
         mutable_data = data.copy() if isinstance(data, dict) else {}
         
-        # Asegurarse de que nombre_noticia sea tratado correctamente
-        if 'nombre_noticia' in mutable_data:
-            # No es necesario hacer un escape adicional, 
-            # el serializador debería manejar los caracteres correctamente
-            pass
-        
         # Manejar las categorias si están en formato lista
         if 'categorias' in mutable_data and isinstance(mutable_data['categorias'], list):
             mutable_data['categorias'] = ','.join(mutable_data['categorias'])
@@ -289,9 +286,6 @@ class NoticiaSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         # Ensure ID is not in the data
         validated_data.pop('id', None)
-        
-        # Debug log to verify validated data
-        print("Validated Data in create:", validated_data)
 
         # Extraer los editores_en_jefe antes de crear el objeto
         editores_en_jefe = validated_data.pop('editores_en_jefe', [])
@@ -310,8 +304,6 @@ class NoticiaSerializer(serializers.ModelSerializer):
         if editores_en_jefe:
             noticia.editores_en_jefe.set(editores_en_jefe)
         
-        # Debug log to verify the created instance
-        print("Created Noticia:", noticia)
         return noticia
 
     def validate_categorias(self, value):
@@ -336,9 +328,6 @@ class NoticiaSerializer(serializers.ModelSerializer):
         return ret
 
     def update(self, instance, validated_data):
-        # Debug log to verify validated data
-        print("Validated Data in update:", validated_data)
-        
         # Extract editores_en_jefe separately as it's a many-to-many field
         editores = validated_data.pop('editores_en_jefe', None)
         
@@ -361,8 +350,8 @@ class NoticiaSerializer(serializers.ModelSerializer):
                 setattr(instance, field, validated_data.get(field, getattr(instance, field)))
 
         # Handle image updates
-        for i in range(7):  # 0 for imagen_cabecera, 1-6 for imagen_1 to imagen_6
-            field_name = f'imagen_{i}' if i > 0 else 'imagen_cabecera'
+        for i in range(1, 7):  # 1-6 for imagen_1 to imagen_6
+            field_name = f'imagen_{i}'
             image_url = validated_data.get(field_name)
             if image_url:
                 setattr(instance, field_name, image_url)
@@ -376,9 +365,8 @@ class NoticiaSerializer(serializers.ModelSerializer):
         # Save the updated instance
         instance.save()
 
-        # Debug log to verify the updated instance
-        print("Updated Noticia:", instance)
         return instance
+    
 from .models import ReaccionNoticia
 
 class ReaccionNoticiaSerializer(serializers.ModelSerializer):

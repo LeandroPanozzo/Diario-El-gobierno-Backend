@@ -23,6 +23,9 @@ from .serializers import UserSerializer
 from django.utils import timezone  # Añade esta importación
 from datetime import timedelta     # Añade esta importación
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from django.core.cache import cache
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import cache_page
 
 from .serializers import (
     RolSerializer, TrabajadorSerializer, UsuarioSerializer, NoticiaSerializer,
@@ -518,8 +521,8 @@ class NoticiaViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def por_categoria(self, request):
         """
-        Noticias filtradas por una o más categorías
-        Uso: /api/noticias/por_categoria/?categoria=cine,literatura&limit=10
+        🚀 OPTIMIZADO: Noticias filtradas por categorías con carga eficiente
+        Uso: /api/noticias/por-categoria/?categoria=cine,literatura&limit=60
         """
         categoria = request.query_params.get('categoria')
         if not categoria:
@@ -528,28 +531,52 @@ class NoticiaViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
             
-        categorias = categoria.split(',')
+        categorias = [cat.strip() for cat in categoria.split(',') if cat.strip()]
         estado = request.query_params.get('estado', 3)
-        limit = request.query_params.get('limit')
+        limit = request.query_params.get('limit', 60)
         
-        queryset = self.get_queryset().filter(estado=estado)
+        try:
+            limit = int(limit)
+        except ValueError:
+            limit = 60
         
+        # 🚀 OPTIMIZACIÓN 1: Usar select_related para cargar autor en una sola query
+        queryset = Noticia.objects.select_related(
+            'autor',
+            'estado'
+        ).prefetch_related(
+            'editores_en_jefe'
+        ).filter(estado=estado)
+        
+        # 🚀 OPTIMIZACIÓN 2: Filtrar con Q objects de forma eficiente
         if len(categorias) > 1:
+            from django.db.models import Q
             category_query = Q()
             for cat in categorias:
-                if cat.strip():
-                    category_query |= Q(categorias__contains=cat.strip())
+                category_query |= Q(categorias__icontains=cat)
             queryset = queryset.filter(category_query)
         else:
-            queryset = queryset.filter(categorias__contains=categoria)
-            
-        queryset = queryset.order_by('-fecha_publicacion')
+            queryset = queryset.filter(categorias__icontains=categoria)
         
-        if limit and limit.isdigit():
-            queryset = queryset[:int(limit)]
+        # 🚀 OPTIMIZACIÓN 3: Ordenar y limitar en la base de datos
+        queryset = queryset.order_by('-fecha_publicacion')[:limit]
         
-        serializer = self.get_serializer(queryset, many=True)
+        # 🚀 OPTIMIZACIÓN 4: Serializar con context optimizado
+        serializer = self.get_serializer(queryset, many=True, context={
+            'request': request,
+            'include_autor': True  # Incluir datos del autor directamente
+        })
+        
         return Response(serializer.data)
+
+    @method_decorator(cache_page(60 * 5))  # Cache de 5 minutos
+    @action(detail=False, methods=['get'])
+    def por_categoria_cached(self, request):
+        """
+        Versión con cache para secciones populares
+        Uso: /api/noticias/por-categoria-cached/?categoria=politica
+        """
+        return self.por_categoria(request)
 
     @action(detail=True, methods=['post'])
     def agregar_editor(self, request, pk=None):
