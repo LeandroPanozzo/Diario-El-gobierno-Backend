@@ -604,15 +604,6 @@ class Noticia(models.Model):
             # Índice para buscar por categorías (si usas búsquedas frecuentes)
             models.Index(fields=['categorias'], 
                         name='idx_categorias'),
-
-            # ✅ Para home featured
-            models.Index(fields=['estado', '-fecha_publicacion'], name='idx_home_featured'),
-            
-            # ✅ Para más vistas
-            models.Index(fields=['estado', '-contador_visitas'], name='idx_home_most_viewed'),
-            
-            # ✅ Para búsqueda por categorías
-            models.Index(fields=['categorias', 'estado', '-fecha_publicacion'], name='idx_home_categories'),
         ]
         
         # Restricciones adicionales

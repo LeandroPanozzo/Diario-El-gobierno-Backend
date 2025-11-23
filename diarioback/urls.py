@@ -114,8 +114,7 @@ urlpatterns = [
     path('password/reset/request/', RequestPasswordResetView.as_view(), name='password-reset-request'),
     path('password/reset/verify/', VerifyTokenView.as_view(), name='password-reset-verify'),
     path('password/reset/confirm/', ResetPasswordView.as_view(), name='password-reset-confirm'),
-    path('home-data/', views.home_data, name='home-data'),  # ✅ NUEVO
-
+    
     # El router debe ir al final para que no interfiera con las rutas específicas
     path('', include(router.urls)),
 ]

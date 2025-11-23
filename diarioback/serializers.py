@@ -503,19 +503,4 @@ class MensajeGlobalSerializer(serializers.ModelSerializer):
         # El trabajador se asigna automáticamente desde la vista
         return MensajeGlobal.objects.create(**validated_data)
     
-
-# serializers.py - Modificar NoticiaSerializer
-
-class NoticiaHomeSerializer(serializers.ModelSerializer):
-    """Serializer ligero optimizado para la home"""
-    autor_nombre = serializers.CharField(source='autor.nombre', read_only=True)
-    autor_apellido = serializers.CharField(source='autor.apellido', read_only=True)
-    autor_foto = serializers.CharField(source='autor.foto_perfil', read_only=True)
     
-    class Meta:
-        model = Noticia
-        fields = [
-            'id', 'nombre_noticia', 'slug', 'fecha_publicacion',
-            'imagen_1', 'contenido', 'categorias',
-            'autor_nombre', 'autor_apellido', 'autor_foto'
-        ]
