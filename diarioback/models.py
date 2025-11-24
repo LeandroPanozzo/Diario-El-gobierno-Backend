@@ -613,6 +613,9 @@ class Noticia(models.Model):
             
             # ✅ Para búsqueda por categorías
             models.Index(fields=['categorias', 'estado', '-fecha_publicacion'], name='idx_home_categories'),
+
+            models.Index(fields=['nombre_noticia'], name='idx_search_title'),
+            models.Index(fields=['Palabras_clave'], name='idx_search_keywords'),
         ]
         
         # Restricciones adicionales

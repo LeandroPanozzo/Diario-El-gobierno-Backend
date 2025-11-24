@@ -1396,3 +1396,86 @@ def home_data(request):
     cache.set(cache_key, data, 300)
     
     return Response(data)
+
+@action(detail=False, methods=['get'])
+def buscar(self, request):
+    """
+    🚀 BÚSQUEDA OPTIMIZADA con caché y queries eficientes
+    """
+    query = request.query_params.get('q', '').strip()
+    search_type = request.query_params.get('type', 'all')
+    
+    if not query:
+        return Response(
+            {"error": "Se requiere el parámetro 'q' para la búsqueda"}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # 🚀 CACHÉ: Verificar si tenemos resultados en caché
+    cache_key = f'search_{query}_{search_type}'
+    cached_results = cache.get(cache_key)
+    if cached_results:
+        return Response(cached_results)
+    
+    # Parámetros de búsqueda
+    limit = min(int(request.query_params.get('limit', 50)), 100)  # Máximo 100
+    estado = request.query_params.get('estado', 3)
+    categoria = request.query_params.get('categoria')
+    
+    # 🚀 QUERY OPTIMIZADA con select_related y prefetch_related
+    queryset = Noticia.objects.select_related(
+        'autor',
+        'estado'
+    ).filter(estado=estado)
+    
+    # 🚀 BÚSQUEDA OPTIMIZADA: Usar solo los campos necesarios
+    from django.db.models import Q
+    
+    if search_type == 'title':
+        # Búsqueda solo en título (más rápida)
+        queryset = queryset.filter(
+            nombre_noticia__icontains=query
+        )
+    elif search_type == 'keywords':
+        # Búsqueda solo en palabras clave
+        queryset = queryset.filter(
+            Palabras_clave__icontains=query
+        )
+    else:
+        # Búsqueda completa (título, subtítulo, palabras clave)
+        # NOTA: Evitamos buscar en 'contenido' porque es muy pesado
+        queryset = queryset.filter(
+            Q(nombre_noticia__icontains=query) |
+            Q(subtitulo__icontains=query) |
+            Q(Palabras_clave__icontains=query)
+        )
+    
+    # Filtro adicional por categoría
+    if categoria:
+        queryset = queryset.filter(categorias__icontains=categoria)
+    
+    # 🚀 OPTIMIZACIÓN: Ordenar y limitar en la base de datos
+    queryset = queryset.order_by('-fecha_publicacion')[:limit]
+    
+    # 🚀 OPTIMIZACIÓN: Obtener count antes de serializar
+    total_count = queryset.count()
+    
+    # 🚀 SERIALIZACIÓN OPTIMIZADA: Solo campos necesarios
+    serializer = self.get_serializer(
+        queryset, 
+        many=True,
+        context={'request': request}
+    )
+    
+    result_data = {
+        'query': query,
+        'search_type': search_type,
+        'results_count': total_count,
+        'returned_count': len(serializer.data),
+        'results': serializer.data
+    }
+    
+    # 🚀 GUARDAR EN CACHÉ por 5 minutos
+    cache.set(cache_key, result_data, 300)
+    
+    return Response(result_data)
